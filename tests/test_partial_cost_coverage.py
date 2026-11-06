@@ -8,6 +8,7 @@ on the project's supported Linux/macOS platforms.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -79,7 +80,7 @@ def _read_rows(
 
 
 @pytest.mark.parametrize("client", ["opencode", "openclaw"])
-@pytest.mark.parametrize("costs", [[1.25, None], [None, 1.25], ["invalid", 1.25], ["NaN", 1.25], [0, None]])
+@pytest.mark.parametrize("costs", [[1.25, None], [None, 1.25], ["invalid", 1.25], ["NaN", 1.25], ["Infinity", 1.25], [0, None]])
 def test_partial_cost_does_not_become_complete_session_cost(tmp_path, monkeypatch, client, costs):
     result = _read_rows(tmp_path, monkeypatch, client, costs)
     assert result["turn_count"] == 2
@@ -120,3 +121,27 @@ def test_openclaw_ignores_replay_and_non_usage_rows_in_cost_coverage(tmp_path, m
     assert result["input_tokens"] == 200
     assert result["output_tokens"] == 20
     assert result["cost_usd"] == 1.75
+
+
+@pytest.mark.parametrize("client", ["opencode", "openclaw"])
+def test_refresh_plan_replaces_legacy_partial_cost_without_token_growth(tmp_path, client):
+    old = usage.ClientUsageEvent(
+        client=client,
+        client_session_id="synthetic",
+        source_path=tmp_path / "synthetic.jsonl",
+        title=None,
+        cwd=None,
+        model=None,
+        input_tokens=200,
+        output_tokens=20,
+        turn_count=2,
+        client_reported_cost_usd=1.25,
+    )
+    corrected = replace(old, client_reported_cost_usd=None)
+    stored = old.to_sentinel_event()
+    stored["event_id"] = "old-partial-cost"
+
+    plan = usage.plan_local_usage_import([corrected], [stored])
+
+    assert plan.refresh_candidates == [corrected]
+    assert plan.unchanged_candidates == []
